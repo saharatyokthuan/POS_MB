@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Quick POS</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<title>Points of Selle</title>
+<link href="https://fonts.googleapis.com/css2?family=Charm:wght@400;700&family=Sarabun:wght@300;400;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <link rel="stylesheet" href="pos.css">
@@ -43,11 +43,11 @@
       <div class="filter-row">
         <input type="text" id="prod-search" placeholder="🔍 ค้นหา..." oninput="renderProducts()">
         <select id="prod-cat-filter" onchange="renderProducts()">
-          <option value="">ทุกหมวด</option>
+          <option value=""> ALL </option>
         </select>
         <select id="prod-stock-filter" onchange="renderProducts()">
           <option value="">สต๊อกทั้งหมด</option>
-          <option value="available">มีสต๊อก (ไม่หมด)</option>
+          <option value="available">มี</option>
           <option value="low">ใกล้หมด</option>
           <option value="out">หมดแล้ว</option>
         </select>
@@ -60,7 +60,7 @@
   <div class="page" id="page-purchase">
     <div class="page-body">
       <div class="flex-between mb-14">
-        <span style="font-weight:600;font-size:15px">🚚 รายการสั่งซื้อ</span>
+        <span style="font-family:Sarabun;font-size:15px">🚚 รายการสั่งซื้อ</span>
         <button class="btn btn-secondary btn-sm" onclick="exportPurchaseExcel()">📥 Excel</button>
       </div>
       <div class="date-row">
@@ -350,11 +350,11 @@
       <div class="pay-display" id="pay-received-display">0</div>
       <div class="pay-change-row">ทอน: <span class="pay-change-val" id="pay-change-display">฿0.00</span></div>
       <div class="quick-cash-row">
-        <button class="quick-cash-btn" onclick="quickCash(20)">+20</button>
-        <button class="quick-cash-btn" onclick="quickCash(50)">+50</button>
-        <button class="quick-cash-btn" onclick="quickCash(100)">+100</button>
-        <button class="quick-cash-btn" onclick="quickCash(500)">+500</button>
-        <button class="quick-cash-btn" onclick="quickCash(1000)">+1000</button>
+        <button class="quick-cash-btn" onclick="quickCash(20)">20</button>
+        <button class="quick-cash-btn" onclick="quickCash(50)">50</button>
+        <button class="quick-cash-btn" onclick="quickCash(100)">100</button>
+        <button class="quick-cash-btn" onclick="quickCash(500)">500</button>
+        <button class="quick-cash-btn" onclick="quickCash(1000)">1000</button>
       </div>
       <div class="payment-keypad">
         <button class="key-btn" onclick="keyPad('7')">7</button>
