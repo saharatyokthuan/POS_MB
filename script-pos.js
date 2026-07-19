@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════
 // DATA STORE
-// ═══════════════════════════════════════════════
+// ══════════════
 const DB = {
   get: (k, d=[]) => { try { return JSON.parse(localStorage.getItem('qpos_'+k)) ?? d; } catch { return d; } },
   set: (k, v) => localStorage.setItem('qpos_'+k, JSON.stringify(v)),
