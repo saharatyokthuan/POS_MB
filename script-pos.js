@@ -117,17 +117,23 @@ if (!categoryMapping) {
   categoryMapping = OFFICIAL_CATEGORY_MAPPING.map(m => ({...m}));
 } else {
   // เผื่อมีข้อมูลเก่าอยู่แล้ว: รวมตารางทางการเข้าไป โดยไม่ลบ mapping ที่ผู้ใช้เพิ่มเองซึ่งไม่ใช่รหัสทางการ
+  let mappingChanged = false;
   OFFICIAL_CATEGORY_MAPPING.forEach(off => {
     const existing = categoryMapping.find(m => m.prefix === off.prefix);
-    if (existing) { existing.name = off.name; existing.locked = true; }
-    else categoryMapping.push({...off});
+    if (existing) {
+      if (existing.name !== off.name || !existing.locked) mappingChanged = true;
+      existing.name = off.name; existing.locked = true;
+    } else { categoryMapping.push({...off}); mappingChanged = true; }
   });
-  DB.set('categoryMapping', categoryMapping);
-  products.forEach(p => { p.category = getCategoryFromProductId(p.product_id); });
-  DB.set('products', products);
+  if (mappingChanged) {
+    DB.set('categoryMapping', categoryMapping);
+    // เฉพาะสินค้าที่ยังไม่เคยตั้งหมวดหมู่เอง ไม่แตะสินค้าที่ผู้ใช้แก้ไขหมวดหมู่เองแล้ว
+    products.forEach(p => { if (!p.category) p.category = getCategoryFromProductId(p.product_id); });
+    DB.set('products', products);
+  }
 }
 
-let cart = [];
+let cart = DB.get('cart', []);
 let currentPayType = 'เงินสด';
 let payReceived = '';
 let editingProductId = null;
@@ -136,7 +142,7 @@ let currentDebtId = null;
 let creditSaleMode = false;
 let adjChanges = {};
 let salesChartInst = null, purChartInst = null, categoryChartInst = null, compareChartInst = null;
-let currentPage = 'pos';
+let currentPage = document.body.dataset.page || 'pos';
 let posCurrentCat = '';
 
 // ═══════════════════════════════════════════════
@@ -156,6 +162,7 @@ const save = ()=>{
   DB.set('billCounter',billCounter); DB.set('settings',settings);
   DB.set('categoryMapping', categoryMapping);
   DB.set('hiddenMappingPrefixes', hiddenMappingPrefixes);
+  DB.set('cart', cart);
 };
 
 function toast(msg, type='success') {
@@ -219,10 +226,19 @@ function renderMapping() {
       <span class="m-prefix">${esc(m.prefix)}</span>
       <span class="m-arrow">→</span>
       <span class="m-cat">${esc(m.name)}</span>
-      <button class="btn-icon" title="${isHidden?'แสดงรายการนี้':'ซ่อนรายการนี้'}" onclick="toggleMappingHidden('${m.prefix}')">${isHidden?'🙈':'👁️'}</button>
-      ${m.locked ? '<span title="หมวดหมู่ทางการ ถาวร ลบไม่ได้" style="opacity:.6">🔒</span>' : `<button class="btn-icon" onclick="deleteMapping(${i})">✕</button>`}
+      <button class="btn-icon" title="${isHidden?'แสดงรายการนี้':'ซ่อนรายการนี้'}" data-action="toggle-hide" data-prefix="${esc(m.prefix)}">${isHidden?'🙈':'👁️'}</button>
+      ${m.locked ? '<span title="หมวดหมู่ทางการ ถาวร ลบไม่ได้" style="opacity:.6">🔒</span>' : `<button class="btn-icon" data-action="delete-mapping" data-index="${i}">✕</button>`}
     </div>`;
   }).join('');
+}
+if (!window.__mappingListDelegated) {
+  window.__mappingListDelegated = true;
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'toggle-hide') toggleMappingHidden(btn.dataset.prefix);
+    else if (btn.dataset.action === 'delete-mapping') deleteMapping(Number(btn.dataset.index));
+  });
 }
 function toggleMappingHidden(prefix) {
   const i = hiddenMappingPrefixes.indexOf(prefix);
@@ -301,52 +317,81 @@ function autoFillCategory() {
 }
 
 // ═══════════════════════════════════════════════
-// NAVIGATION
+// NAVIGATION (multi-page: each "page" is now its own .html file)
 // ═══════════════════════════════════════════════
+
+// Kept as `showPage` for backward-compat with existing onclick="showPage('x')"
+// markup — now performs a real page navigation instead of an SPA toggle.
 function showPage(name) {
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  if (name === currentPage) return;
+  location.href = name + '.html';
+}
+
+// stock-adjust modal only exists in the DOM on products.html — if we're
+// somewhere else, navigate there first and auto-open it on load.
+function showSubPage(name) {
+  if (name === 'stock-adjust') {
+    if (currentPage !== 'products') { location.href = 'products.html#stock-adjust'; return; }
+    adjChanges = {};
+    renderAdjList();
+    openModal('modal-stock-adjust');
+  }
+}
+
+function setActiveNav(name) {
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
-  document.getElementById('page-'+name).classList.add('active');
   const navEl = document.getElementById('nav-'+name);
   if (navEl) navEl.classList.add('active');
-  currentPage = name;
 
   const fab = document.getElementById('cart-fab');
-  const topAction = document.getElementById('topbar-action');
-  const billBadge = document.getElementById('pos-bill-no');
-
-  fab.style.display = name === 'pos' ? 'flex' : 'none';
-  topAction.style.display = 'none';
-  billBadge.style.display = 'none';
+  if (fab) fab.style.display = name === 'pos' ? 'flex' : 'none';
 
   const titles = {
     pos:'🛒 ขายสินค้า', products:'📦 สินค้า',
     purchase:'🚚 สั่งซื้อ', debt:'💳 ลูกหนี้',
     reports:'📊 รายงาน', more:'☰ เมนู'
   };
-  document.getElementById('topbar-title').textContent = titles[name] || '';
+  const titleEl = document.getElementById('topbar-title');
+  if (titleEl) titleEl.textContent = titles[name] || '';
+}
+
+// Runs the same per-page setup that showPage() used to run inline, now
+// triggered once on DOMContentLoaded for whichever page was loaded.
+function runPageInit(name) {
+  const topAction = document.getElementById('topbar-action');
+  const billBadge = document.getElementById('pos-bill-no');
+  if (topAction) topAction.style.display = 'none';
+  if (billBadge) billBadge.style.display = 'none';
 
   if (name === 'pos') {
-    billBadge.style.display = 'inline';
-    billBadge.textContent = 'บิล #B'+String(billCounter).padStart(5,'0');
-    renderPosProducts(); updateCatChips();
+    if (billBadge) {
+      billBadge.style.display = 'inline';
+      billBadge.textContent = 'บิล #B'+String(billCounter).padStart(5,'0');
+    }
+    renderPosProducts(); updateCatChips(); updateCartFab();
   }
   if (name === 'products') {
-    topAction.style.display = 'inline-flex';
-    topAction.textContent = '+ เพิ่มสินค้า';
-    topAction.onclick = ()=>openProductModal();
+    if (topAction) {
+      topAction.style.display = 'inline-flex';
+      topAction.textContent = '+ เพิ่มสินค้า';
+      topAction.onclick = ()=>openProductModal();
+    }
     updateCategorySelects(); renderProducts();
   }
   if (name === 'purchase') {
-    topAction.style.display = 'inline-flex';
-    topAction.textContent = '+ บันทึกซื้อ';
-    topAction.onclick = ()=>openPurchaseModal();
+    if (topAction) {
+      topAction.style.display = 'inline-flex';
+      topAction.textContent = '+ บันทึกซื้อ';
+      topAction.onclick = ()=>openPurchaseModal();
+    }
     renderPurchases();
   }
   if (name === 'debt') {
-    topAction.style.display = 'inline-flex';
-    topAction.textContent = '+ เพิ่ม';
-    topAction.onclick = ()=>openDebtModal();
+    if (topAction) {
+      topAction.style.display = 'inline-flex';
+      topAction.textContent = '+ เพิ่ม';
+      topAction.onclick = ()=>openDebtModal();
+    }
     renderDebts();
   }
   if (name === 'reports') {
@@ -359,21 +404,53 @@ function showPage(name) {
   }
 }
 
-function showSubPage(name) {
-  if (name === 'stock-adjust') {
-    adjChanges = {};
-    renderAdjList();
-    openModal('modal-stock-adjust');
+// If we arrived via a #hash link (e.g. products.html#stock-adjust), open
+// the matching modal once the page's own init has finished rendering.
+function handleHashAction() {
+  const hash = location.hash.replace('#','');
+  if (!hash) return;
+  if (hash === 'stock-adjust' && currentPage === 'products') {
+    adjChanges = {}; renderAdjList(); openModal('modal-stock-adjust');
   }
+  if (hash === 'expense' && currentPage === 'more') {
+    openExpense();
+  }
+  if (hash === 'hold' && currentPage === 'pos') {
+    openHoldBillsPage();
+  }
+  history.replaceState(null, '', location.pathname);
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // ═══════════════════════════════════════════════
+// SIDE MENU
+// ═══════════════════════════════════════════════
+function openMenu() {
+  document.getElementById('sidebar').classList.add('open');
+  document.getElementById('sidebar-overlay').classList.add('open');
+  const btn = document.getElementById('hamburger-btn');
+  btn.setAttribute('aria-expanded', 'true');
+  btn.textContent = '×';
+}
+function closeMenu() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
+  const btn = document.getElementById('hamburger-btn');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.textContent = '☰';
+}
+function navigateFromMenu(name) {
+  closeMenu();
+  showPage(name);
+}
+
+// ═══════════════════════════════════════════════
 // SETTINGS
 // ═══════════════════════════════════════════════
 function loadSettings() {
+  document.getElementById('set-store-code').value = settings.storeCode||'';
   document.getElementById('set-store-name').value = settings.storeName||'';
   document.getElementById('set-store-addr').value = settings.storeAddr||'';
   document.getElementById('set-store-phone').value = settings.storePhone||'';
@@ -383,6 +460,7 @@ function loadSettings() {
   document.getElementById('set-vat').value = settings.vat||'no';
 }
 function saveSettings() {
+  settings.storeCode = document.getElementById('set-store-code').value;
   settings.storeName = document.getElementById('set-store-name').value;
   settings.storeAddr = document.getElementById('set-store-addr').value;
   settings.storePhone = document.getElementById('set-store-phone').value;
@@ -390,7 +468,16 @@ function saveSettings() {
   settings.lowStock = +document.getElementById('set-low-stock').value;
   settings.expiryDays = +document.getElementById('set-expiry-days').value;
   settings.vat = document.getElementById('set-vat').value;
-  save(); toast('บันทึกแล้ว ✓');
+  save(); updateHeaderSubtitle(); toast('บันทึกแล้ว ✓');
+}
+function updateHeaderSubtitle() {
+  const el = document.getElementById('header-subtitle');
+  if (!el) return;
+  const parts = [settings.storeCode, settings.storeName].filter(Boolean);
+  el.textContent = parts.join(' · ');
+}
+function openSetting() {
+  navigateFromMenu('more');
 }
 function clearAllData() {
   if (!confirm('⚠️ ล้างข้อมูลทั้งหมด?')) return;
@@ -539,8 +626,8 @@ function renderPosProducts() {
     const lowCls=p.stock<=0?'no-stock':p.stock<=settings.lowStock?'low-stock':'';
     return `<div class="product-card ${lowCls}" onclick="clickProduct('${p.id}')">
       <div class="pc-name">${esc(p.name)}</div>
-      <div class="pc-product_id">รหัส: ${p.product_id||'-'}</div>
-      <div class="pc-barcode">Barcode: ${p.barcode||'-'}</div>
+      <div class="pc-product_id">รหัส: ${esc(p.product_id||'-')}</div>
+      <div class="pc-barcode">Barcode: ${esc(p.barcode||'-')}</div>
       <div class="pc-price">${fmt(p.price)}</div>
       <div class="pc-stock">${p.stock<=0?'❌ หมด':`📦 ${p.stock}`}</div>
     </div>`;
@@ -597,8 +684,10 @@ function addFirstResult() {
   }
 }
 function updateCartFab() {
+  DB.set('cart', cart);
   const total=cart.reduce((s,c)=>s+c.qty,0);
   const badge=document.getElementById('cart-count-badge');
+  if(!badge) return;
   badge.style.display=total?'flex':'none';
   badge.textContent=total;
 }
@@ -806,6 +895,7 @@ function holdCurrentCart(){
   toast(`พักบิล "${n}" แล้ว`);
 }
 function openHoldBillsPage(){
+  if (currentPage !== 'pos') { location.href = 'pos.html#hold'; return; }
   const list=document.getElementById('hold-bills-list');
   list.innerHTML=holdBills.length?holdBills.map((b,i)=>`
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;margin-bottom:8px">
@@ -1020,6 +1110,7 @@ function renderDebts(){
 // EXPENSE
 // ═══════════════════════════════════════════════
 function openExpense(){
+  if (currentPage !== 'more') { location.href = 'more.html#expense'; return; }
   document.getElementById('exp-name').value='';
   document.getElementById('exp-amount').value='';
   document.getElementById('exp-date').value=today();
@@ -1411,6 +1502,53 @@ function importExcel(event) {
   reader.readAsArrayBuffer(file);
 }
 
+// ── MASTER UPDATE: อัพเดทชื่อ+หมวดหมู่ จากไฟล์ Excel เท่านั้น ──
+// (ไม่แตะราคา/ทุน/สต๊อก ต่างจาก importExcel ที่อัปเดตทุกฟิลด์)
+function importMasterUpdate(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet);
+
+      let updated = 0;
+      let notFound = 0;
+
+      json.forEach(row => {
+        const productId = (row['Master Product ID'] || row['รหัสสินค้า'] || row['Product ID'] || '').toString().trim();
+        const barcode = (row['บาร์โค้ด'] || row['Barcode'] || row['barcode'] || '').toString().trim();
+        const name = (row['ชื่อสินค้า'] || row['ชื่อสินค้า EN'] || '').toString().trim();
+        const category = (row['หมวดหมู่'] || row['Category'] || '').toString().trim();
+
+        if (!productId && !barcode) return;
+
+        const existing = products.find(p => (productId && p.product_id === productId) || (barcode && p.barcode === barcode));
+        if (!existing) { notFound++; return; }
+
+        if (name) existing.name = name;
+        existing.category = category || getCategoryFromProductId(existing.product_id);
+        updated++;
+      });
+
+      save();
+      renderProducts();
+      renderPosProducts();
+      updateCatChips();
+      updateCategorySelects();
+      toast(`✅ อัปเดตชื่อ+หมวดหมู่แล้ว ${updated} รายการ${notFound ? ` (ไม่พบสินค้า ${notFound} รายการ)` : ''}`, 'success');
+    } catch (err) {
+      toast('เกิดข้อผิดพลาดในการอ่านไฟล์: ' + err.message, 'error');
+      console.error(err);
+    }
+    event.target.value = '';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 // ── FULL DATA BACKUP / RESTORE ───────────────────
 function exportBackupJSON(){
   const backup={products,sales,purchases,debts,expenses,settings,holdBills,billCounter,categoryMapping,exportedAt:new Date().toISOString(),version:1};
@@ -1581,7 +1719,8 @@ async function scanBarcodeToProductForm() {
 // SEED DATA
 // ═══════════════════════════════════════════════
 function seedDemoData(){
-  if(products.length) return;
+  if(products.length || DB.get('seeded', false)) return;
+  DB.set('seeded', true);
   const seeds=[
     {product_id:'4111505', barcode:'8859733221136', name:'ไอโอร่าบิสกิตรสนมกระเป๋าหูรูดToyStory16ก.', price:25},
     {product_id:'4007475', barcode:'6942712001293', name:'เอมอสกัมมี่สติชรสพีชและบลูเบอร์รี่ 34 ก.(ด.)', price:30},
@@ -1601,15 +1740,23 @@ function seedDemoData(){
 // ═══════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded',()=>{
   seedDemoData();
-  renderMapping();
-  updateCategorySelects();
-  updateCatChips();
-  renderPosProducts();
-  document.getElementById('pos-bill-no').textContent='บิล #B'+String(billCounter).padStart(5,'0');
+  updateHeaderSubtitle();
+  setActiveNav(currentPage);
+  runPageInit(currentPage);
+  handleHashAction();
 
   const expWarn=new Date(); expWarn.setDate(expWarn.getDate()+settings.expiryDays);
   const alerts=products.filter(p=>p.stock<=settings.lowStock||(p.expiry&&new Date(p.expiry)<=expWarn));
   const nb=document.getElementById('nav-alert-badge');
-  nb.textContent=alerts.length; nb.style.display=alerts.length?'flex':'none';
+  if(nb){ nb.textContent=alerts.length; nb.style.display=alerts.length?'flex':'none'; }
   if(alerts.length) setTimeout(()=>toast(`⚠️ ${alerts.length} รายการต้องตรวจสอบ`,'warning'),800);
 });
+
+function toggleMappingCard(){
+  const body=document.getElementById('mapping-card-body');
+  const chevron=document.getElementById('mapping-card-chevron');
+  if(!body) return;
+  const isOpen=body.style.display!=='none';
+  body.style.display=isOpen?'none':'block';
+  if(chevron){ chevron.style.display='inline-block'; chevron.style.transform=isOpen?'':'rotate(180deg)'; }
+}
