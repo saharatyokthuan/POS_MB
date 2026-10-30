@@ -317,21 +317,24 @@ function autoFillCategory() {
 }
 
 // ═══════════════════════════════════════════════
-// NAVIGATION (multi-page: each "page" is now its own .html file)
+// NAVIGATION (single page: every "page" is a #page-<name> section in index.html)
 // ═══════════════════════════════════════════════
 
-// Kept as `showPage` for backward-compat with existing onclick="showPage('x')"
-// markup — now performs a real page navigation instead of an SPA toggle.
 function showPage(name) {
   if (name === currentPage) return;
-  location.href = name + '.html';
+  const current = document.getElementById('page-' + currentPage);
+  if (current) current.classList.remove('active');
+  const next = document.getElementById('page-' + name);
+  if (next) next.classList.add('active');
+  currentPage = name;
+  setActiveNav(name);
+  runPageInit(name);
 }
 
-// stock-adjust modal only exists in the DOM on products.html — if we're
-// somewhere else, navigate there first and auto-open it on load.
+// All modals live in index.html, so switch to the products page and open it.
 function showSubPage(name) {
   if (name === 'stock-adjust') {
-    if (currentPage !== 'products') { location.href = 'products.html#stock-adjust'; return; }
+    showPage('products');
     adjChanges = {};
     renderAdjList();
     openModal('modal-stock-adjust');
@@ -355,8 +358,7 @@ function setActiveNav(name) {
   if (titleEl) titleEl.textContent = titles[name] || '';
 }
 
-// Runs the same per-page setup that showPage() used to run inline, now
-// triggered once on DOMContentLoaded for whichever page was loaded.
+// Per-page setup, run by showPage() and once on DOMContentLoaded.
 function runPageInit(name) {
   const topAction = document.getElementById('topbar-action');
   const billBadge = document.getElementById('pos-bill-no');
@@ -404,8 +406,8 @@ function runPageInit(name) {
   }
 }
 
-// If we arrived via a #hash link (e.g. products.html#stock-adjust), open
-// the matching modal once the page's own init has finished rendering.
+// If loaded with a #hash (e.g. index.html#stock-adjust), open the matching
+// modal once the page's own init has finished rendering.
 function handleHashAction() {
   const hash = location.hash.replace('#','');
   if (!hash) return;
@@ -895,7 +897,7 @@ function holdCurrentCart(){
   toast(`พักบิล "${n}" แล้ว`);
 }
 function openHoldBillsPage(){
-  if (currentPage !== 'pos') { location.href = 'pos.html#hold'; return; }
+  showPage('pos');
   const list=document.getElementById('hold-bills-list');
   list.innerHTML=holdBills.length?holdBills.map((b,i)=>`
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;margin-bottom:8px">
@@ -1110,7 +1112,7 @@ function renderDebts(){
 // EXPENSE
 // ═══════════════════════════════════════════════
 function openExpense(){
-  if (currentPage !== 'more') { location.href = 'more.html#expense'; return; }
+  showPage('more');
   document.getElementById('exp-name').value='';
   document.getElementById('exp-amount').value='';
   document.getElementById('exp-date').value=today();
